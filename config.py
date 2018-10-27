@@ -41,9 +41,9 @@ hidden_size = 500  # num_units in uni-directional cell
 bidirectional = True
 
 # Conv Network
-num_conv_stack = r
-conv_dilation_factor = m
-num_targets = 2
+num_conv_stack = 4
+conv_dilation_factor = 4
+conv_channels = 256
 
 # training param
 seed = 123

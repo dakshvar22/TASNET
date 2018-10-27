@@ -1,5 +1,5 @@
 import tensorflow as tf
-from utils.tf.TemporalBlock import TemporalBlock
+from utils.tf.tcn.TemporalBlock import TemporalBlock
 
 class TemporalConvNet(tf.layers.Layer):
     def __init__(self, num_channels, kernel_size=2, dropout=0.2,

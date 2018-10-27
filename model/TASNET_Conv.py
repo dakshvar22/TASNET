@@ -8,8 +8,8 @@ import time
 import itertools
 import numpy as np
 import tensorflow as tf
-import tensorflow.contrib.layers as tcl
-from utils.tools import *
+# from utils.tools import *
+from utils.tf.tcn.TemporalConvNet import TemporalConvNet
 
 
 class TASmodel(object):
@@ -52,6 +52,7 @@ class TASmodel(object):
         feat_dim = self.config.frame_size
         for i in range(self.num_gpu):
             self._input.append(tf.placeholder(tf.float32, shape=[None, None, feat_dim]))
+            # self._input.append(tf.placeholder(tf.float32, shape=[2, 50, feat_dim]))
             self._target.append(tf.placeholder(tf.float32, shape=[None, self.num_speakers, None, feat_dim]))
             self._seq_len.append(tf.placeholder(tf.int32, shape=[None]))
 
@@ -68,6 +69,7 @@ class TASmodel(object):
         num_basis = self.config.num_basis
         feat_dim = self.config.frame_size
         batch_size = tf.shape(inputs)[0]
+        # batch_size = inputs.get_shape()[0]
         # shape is [B, T, F]
         max_len = tf.shape(inputs)[1]
         with tf.variable_scope("encoder"):
@@ -77,6 +79,8 @@ class TASmodel(object):
             reshape_inputs = tf.expand_dims(tf.reshape(norm_inputs, [-1, feat_dim]), axis=2)
             conv_inputs = tf.nn.relu(tf.nn.conv1d(reshape_inputs, basis_kernel, stride=1, padding='VALID'))
             mixture_w = tf.reshape(conv_inputs, [batch_size, max_len, num_basis], name='mixture_w')
+
+            print('encoded mixture',mixture_w.get_shape())
         return mixture_w, norm_coef
 
 
@@ -84,55 +88,88 @@ class TASmodel(object):
     def separate(self,mixture_w):
         num_basis = self.config.num_basis
         batch_size = tf.shape(mixture_w)[0]
+        # batch_size = mixture_w.get_shape()[0]
         max_len = tf.shape(mixture_w)[1]
+        # max_len = mixture_w.get_shape()[1]
+        num_tcn_blocks = self.config.num_conv_stack
+        num_dilation_levels = self.config.conv_dilation_factor
+        tcn_out_channels = self.config.conv_channels
 
-    def separate(self, mixture_w, seq_len):
-        num_basis = self.config.num_basis
-        num_layers = self.config.num_layers
-        hidden_size = self.config.hidden_size
-        rnn_cell = tf.contrib.rnn.LSTMCell
-        batch_size = tf.shape(mixture_w)[0]
-        max_len = tf.shape(mixture_w)[1]
-        with tf.variable_scope("separator"):
-            norm_mix_w = layer_normalization(mixture_w, num_basis, axis=2, eps=self.eps)
-            lstm_input = norm_mix_w
-            for i in range(num_layers):
-                if self.config.bidirectional:
-                    fw_cell = rnn_cell(hidden_size, use_peepholes=True, cell_clip=25, state_is_tuple=True)
-                    bw_cell = rnn_cell(hidden_size, use_peepholes=True, cell_clip=25, state_is_tuple=True)
-                    initial_fw = fw_cell.zero_state(tf.shape(lstm_input)[0], dtype=tf.float32)
-                    initial_bw = bw_cell.zero_state(tf.shape(lstm_input)[0], dtype=tf.float32)
-                    output, _ = tf.nn.bidirectional_dynamic_rnn(fw_cell, bw_cell, lstm_input,
-                                                                sequence_length=tf.to_int32(seq_len),
-                                                                initial_state_fw=initial_fw,
-                                                                initial_state_bw=initial_bw,
-                                                                scope='lstm_%d'%(i+1), dtype=tf.float32,
-                                                                time_major=False)
-                    output = tf.concat(output, axis=2)
-                    lstm_input = output
-                else:
-                    fw_cell = rnn_cell(hidden_size, use_peepholes=True, cell_clip=25, state_is_tuple=True)
-                    initial_fw = fw_cell.zero_state(tf.shape(lstm_input)[0], dtype=tf.float32)
-                    output, _ = tf.nn.dynamic_rnn(fw_cell, lstm_input,
-                                                  sequence_length=tf.to_int32(seq_len),
-                                                  initial_state=initial_fw, dtype=tf.float32,
-                                                  scope='lstm_%d'%(i+1), time_major=False)
-                    lstm_input = output
-            out_dims = hidden_size * 2 if self.config.bidirectional else hidden_size
-            output = tf.reshape(output, [-1, out_dims])
-            output = tcl.fully_connected(inputs=output, num_outputs=self.num_speakers*num_basis, activation_fn=None)
-            masks = tf.reshape(output, [batch_size, max_len, self.num_speakers, num_basis])
-            masks = tf.nn.softmax(masks, axis=2)
+        with tf.variable_scope("separation"):
+
+            for tcn_block_index in range(num_tcn_blocks):
+                mixture_w = TemporalConvNet([tcn_out_channels]*num_dilation_levels)(mixture_w)
+
+            print('Mixture after conv stack', mixture_w.get_shape())
+
+            masks = tf.layers.conv1d(mixture_w, filters=self.num_speakers * num_basis, kernel_size=1, strides= 1, padding='same')
+            masks = tf.reshape(masks,shape=[batch_size,max_len,self.num_speakers,num_basis])
+            print('Mixture after conv 1', masks.get_shape())
+
+            masks = tf.nn.softmax(masks, dim=2)
+
         return masks
+
+
+    # def separate(self, mixture_w, seq_len):
+    #     num_basis = self.config.num_basis
+    #     num_layers = self.config.num_layers
+    #     hidden_size = self.config.hidden_size
+    #     rnn_cell = tf.contrib.rnn.LSTMCell
+    #     batch_size = tf.shape(mixture_w)[0]
+    #     max_len = tf.shape(mixture_w)[1]
+    #     with tf.variable_scope("separator"):
+    #         norm_mix_w = layer_normalization(mixture_w, num_basis, axis=2, eps=self.eps)
+    #         lstm_input = norm_mix_w
+    #         for i in range(num_layers):
+    #             if self.config.bidirectional:
+    #                 fw_cell = rnn_cell(hidden_size, use_peepholes=True, cell_clip=25, state_is_tuple=True)
+    #                 bw_cell = rnn_cell(hidden_size, use_peepholes=True, cell_clip=25, state_is_tuple=True)
+    #                 initial_fw = fw_cell.zero_state(tf.shape(lstm_input)[0], dtype=tf.float32)
+    #                 initial_bw = bw_cell.zero_state(tf.shape(lstm_input)[0], dtype=tf.float32)
+    #                 output, _ = tf.nn.bidirectional_dynamic_rnn(fw_cell, bw_cell, lstm_input,
+    #                                                             sequence_length=tf.to_int32(seq_len),
+    #                                                             initial_state_fw=initial_fw,
+    #                                                             initial_state_bw=initial_bw,
+    #                                                             scope='lstm_%d'%(i+1), dtype=tf.float32,
+    #                                                             time_major=False)
+    #                 output = tf.concat(output, axis=2)
+    #                 lstm_input = output
+    #             else:
+    #                 fw_cell = rnn_cell(hidden_size, use_peepholes=True, cell_clip=25, state_is_tuple=True)
+    #                 initial_fw = fw_cell.zero_state(tf.shape(lstm_input)[0], dtype=tf.float32)
+    #                 output, _ = tf.nn.dynamic_rnn(fw_cell, lstm_input,
+    #                                               sequence_length=tf.to_int32(seq_len),
+    #                                               initial_state=initial_fw, dtype=tf.float32,
+    #                                               scope='lstm_%d'%(i+1), time_major=False)
+    #                 lstm_input = output
+    #         out_dims = hidden_size * 2 if self.config.bidirectional else hidden_size
+    #         output = tf.reshape(output, [-1, out_dims])
+    #         output = tcl.fully_connected(inputs=output, num_outputs=self.num_speakers*num_basis, activation_fn=None)
+    #         masks = tf.reshape(output, [batch_size, max_len, self.num_speakers, num_basis])
+    #         masks = tf.nn.softmax(masks, axis=2)
+    #     return masks
 
     def decode(self, mixture_w, masks):
         num_basis = self.config.num_basis
         feat_dim = self.config.frame_size
-        with tf.variable_scope("deocder"):
-            expand_mix_w = tf.expand_dims(mixture_w, axis=2)
-            source_w = expand_mix_w * masks
+        with tf.variable_scope("decoder"):
+
+            repr_vec = tf.expand_dims(mixture_w,axis=2) * masks
+
+            print('Repr vec',repr_vec.get_shape())
+
+            # source_sig = tf.nn.conv1d(repr_vec,)
+
+            # expand_mix_w = tf.expand_dims(mixture_w, axis=2)
+            # source_w = expand_mix_w * masks
             recon_basis = tf.get_variable("recon_basis", shape=[num_basis, feat_dim], dtype=tf.float32)
-            source_sig = tf.einsum('btcw,wf->btcf', source_w, recon_basis)
+            source_sig = tf.einsum('btcw,wf->btcf', repr_vec, recon_basis)
+
+            print('Source signals sorted',source_sig.get_shape())
+
+            exit(0)
+
         return source_sig
 
     def get_seq_mask(self, max_len, seq_len):
@@ -187,7 +224,7 @@ class TASmodel(object):
 
     def tower_cost(self, inputs, targets, seq_len):
         mixture_w, norm_coef = self.encode(inputs)
-        masks = self.separate(mixture_w, seq_len)
+        masks = self.separate(mixture_w)
         # shape is [B, T, nc, F]
         recon_sig = self.decode(mixture_w, masks)
         expand_norm_coef = tf.expand_dims(norm_coef, axis=2)
@@ -334,3 +371,10 @@ class TASmodel(object):
         except Exception as e:
             logging.error("Failed to load model from {}".format(load_path))
             raise e
+
+
+if __name__ == '__main__':
+    import config as cfg
+
+    sess = tf.Session()
+    model = TASmodel(sess=sess,config=cfg,num_gpu=1)

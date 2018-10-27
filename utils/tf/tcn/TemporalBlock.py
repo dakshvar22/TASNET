@@ -1,5 +1,5 @@
 import tensorflow as tf
-from utils.tf.CausalConv1D import CausalConv1D
+from utils.tf.tcn.CausalConv1D import CausalConv1D
 
 class TemporalBlock(tf.layers.Layer):
     def __init__(self, n_outputs, kernel_size, strides, dilation_rate, dropout=0.2,
