@@ -35,8 +35,15 @@ gpu_list = [0]
 # model config
 num_basis = 500
 num_layers = 4
+
+# LSTM network
 hidden_size = 500  # num_units in uni-directional cell
 bidirectional = True
+
+# Conv Network
+num_conv_stack = r
+conv_dilation_factor = m
+num_targets = 2
 
 # training param
 seed = 123
